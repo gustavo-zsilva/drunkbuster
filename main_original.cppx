@@ -1,0 +1,293 @@
+#define F_CPU 16000000UL
+
+#include <avr/io.h>
+#include <util/delay.h>
+#include <stdbool.h>
+
+#include "funsape/funsapeLibGlobalDefines.hpp"
+#include "funsape/peripheral/funsapeLibInt0.hpp"
+#include "funsape/peripheral/funsapeLibGpioBus.hpp"
+#include "funsape/peripheral/funsapeLibGpioPin.hpp"
+#include "funsape/peripheral/funsapeLibUsart0.hpp"
+#include "funsape/peripheral/funsapeLibTimer0.hpp"
+#include "funsape/peripheral/funsapeLibTimer1.hpp"
+#include "funsape/peripheral/funsapeLibAdc.hpp"
+#include "funsape/peripheral/funsapeLibTimer2.hpp"
+#include "funsape/device/funsapeLibHd44780.hpp"
+
+vuint8_t hours = 12;
+vuint8_t minutes = 34;
+vuint8_t seconds = 56;
+
+vbool_t newLcdTextReady = false;
+vuint8_t state = 0;
+/*
+0 - Estado OCIOSO
+1 - Estado AJUSTE
+2::7 - Estado AJUSTE DOS DÍGITOS
+*/
+
+vbool_t updateTime = false;
+
+vuint8_t buttonHoldCounter = 0;
+vbool_t isButtonPressed = false;
+
+Hd44780 lcd;
+GpioBus gpioLcdData;
+GpioPin gpioLcdEn;
+GpioPin gpioLcdRs;
+GpioPin gpioLcdRw;
+
+int main()
+{
+    // Configure LEDS
+    setBit(DDRD, PD0);
+    setBit(DDRD, PD1);
+
+    // Configure PULL UP
+    clrBit(DDRD, PD2);
+    setBit(PORTD, PD2);
+
+    // Configure LCD Display
+    gpioLcdData.init(&DDRB, GpioBus::PinIndex::P0, 4);
+    gpioLcdEn.init(&DDRB, GpioPin::PinIndex::P4);
+    gpioLcdRs.init(&DDRB, GpioPin::PinIndex::P5);
+    lcd.setControlPort(&gpioLcdEn, &gpioLcdRs);
+    lcd.setDataPort(&gpioLcdData);
+    lcd.init(Hd44780::Size::LCD_16X2);
+    lcd.stdio();
+    printf("Painel veicular\nBy Gustavo\n");
+
+    // Configure INT0
+    int0.init(Int0::SenseMode::BOTH_EDGES);
+    int0.clearInterruptRequest();
+    int0.activateInterrupt();
+
+    // Configure TIMER1
+    timer1.init(Timer1::Mode::CTC_OCRA, Timer1::ClockSource::PRESCALER_256);
+    timer1.setCompareAValue(62500);
+    timer1.clearCompareAInterruptRequest();
+    timer1.activateCompareAInterrupt();
+
+    // Activate global interrupts
+    sei();
+
+    // Splash Screen delay
+    delayMs(1000);
+
+    while(1) {
+        // cplBit(PORTD, PD0);
+        // delayMs(100);
+
+        if(newLcdTextReady) {
+            printf("%02u:%02u:%02u\n\n", hours, minutes, seconds);
+            newLcdTextReady = !newLcdTextReady;
+        }
+    }
+
+    return 0;
+}
+
+void int0InterruptCallback(void)
+{
+    // Variável de checagem de botão pressionado por pulso curto ou longo
+    uint8_t yield = 0;
+
+    if(isBitClr(PIND, PIND2)) {
+        // Borda de descida (clicou no botão)
+        isButtonPressed = true;
+        yield = 1;
+    } else {
+        // Borda de subida (soltou o botão)
+        isButtonPressed = false;
+        yield = 2;
+        // Se o contador contar mais de 2s c/ botão pressionado
+        if(buttonHoldCounter >= 2) {
+            state++;                                            // Avança estado da máquina de estados
+            yield = 0;
+        }
+        buttonHoldCounter = 0;                                  // Reseta contador
+    }
+
+    // Máquina de estados operando em modo de ajuste & botão ativado com pulso curto (yield = 2)
+    if(state > 1 && yield == 2) {
+        // Sinaliza que usuário quer incrementar o dígito selecionado
+        updateTime = true;
+    }
+
+    // Retornar ao modo ocioso
+    if(state > 7) {
+        state = 0;
+    }
+}
+
+void timer1CompareACallback(void)
+{
+    if(isButtonPressed) {
+        // A cada 1s com botão pressionado, adiciona 1 ao contador
+        buttonHoldCounter++;
+    }
+
+    switch(state) {
+    case 0:
+        // Estado OCIOSO (Incrementa horas)
+        lcd.setDisplayState(Hd44780::DisplayState::CURSOR_OFF);         // Desabilita cursor
+
+        seconds++;
+
+        if(seconds >= 60) {
+            seconds = 0;
+            minutes++;
+            if(minutes >= 60) {
+                minutes = 0;
+                hours++;
+                if(hours >= 24) {
+                    hours = 0;
+                }
+            }
+        }
+        break;
+    case 1:
+        // Estado AJUSTE
+
+        // Setando cursor aqui para dar feedback visual mais rápido ao usuário
+        lcd.setDisplayState(Hd44780::DisplayState::BLINK_ON);
+        lcd.cursorHome();
+
+        state++;
+        break;
+    case 2:
+        // Ajuste DEZENA HORA
+
+        if(updateTime) {
+            uint8_t dezenaHora = hours / 10;
+
+            if(dezenaHora >= 2) {
+                dezenaHora = 0;
+            } else {
+                dezenaHora++;
+            }
+
+            // Mantém a unidade atual e atualiza a dezena
+            hours = (dezenaHora * 10) + (hours % 10);
+
+            updateTime = false;
+        }
+
+        break;
+    case 3:
+        // Ajuste UNIDADE HORA
+
+        // Debug
+        // lcd.setDisplayState(Hd44780::DisplayState::BLINK_ON);
+
+        lcd.cursorGoTo(0, 1);
+        lcd.clearScreen();
+
+        if(updateTime) {
+            uint8_t dezenaHora = hours / 10;
+            uint8_t unidadeHora = hours % 10;
+
+            if(dezenaHora >= 2 && unidadeHora >= 3) {
+                unidadeHora = 0;
+            } else if(dezenaHora < 2 && unidadeHora >= 9) {
+                unidadeHora = 0;
+            } else {
+                unidadeHora++;
+            }
+
+            // Mantém a dezena atual e atualiza a unidade
+            hours = (dezenaHora * 10) + unidadeHora;
+
+            updateTime = false;
+        }
+        break;
+    case 4:
+        // Ajuste DEZENA MINUTO
+
+        lcd.cursorGoTo(0, 3);
+        lcd.clearScreen();
+
+        if(updateTime) {
+            uint8_t dezenaMinuto = minutes / 10;
+
+            if(dezenaMinuto >= 5) {
+                dezenaMinuto = 0;
+            } else {
+                dezenaMinuto++;
+            }
+
+            // Mantém a unidade atual e atualiza a dezena
+            minutes = (dezenaMinuto * 10) + (minutes % 10);
+
+            updateTime = false;
+        }
+        break;
+    case 5:
+        // Ajuste UNIDADE MINUTO
+
+        lcd.cursorGoTo(0, 4);
+        lcd.clearScreen();
+
+        if(updateTime) {
+            uint8_t dezenaMinuto = minutes / 10;
+            uint8_t unidadeMinuto = minutes % 10;
+
+            if(unidadeMinuto >= 9) {
+                unidadeMinuto = 0;
+            } else {
+                unidadeMinuto++;
+            }
+
+            // Mantém a unidade atual e atualiza a dezena
+            minutes = (dezenaMinuto * 10) + (unidadeMinuto);
+
+            updateTime = false;
+        }
+        break;
+    case 6:
+        // Ajuste DEZENA SEGUNDO
+
+        lcd.cursorGoTo(0, 6);
+        lcd.clearScreen();
+
+        if(updateTime) {
+            uint8_t dezenaSegundo = seconds / 10;
+
+            if(dezenaSegundo >= 5) {
+                dezenaSegundo = 0;
+            } else {
+                dezenaSegundo++;
+            }
+
+            // Mantém a unidade atual e atualiza a dezena
+            seconds = (dezenaSegundo * 10) + (seconds % 10);
+
+            updateTime = false;
+        }
+        break;
+    case 7:
+        // Ajuste UNIDADE SEGUNDO
+
+        lcd.cursorGoTo(0, 7);
+        lcd.clearScreen();
+
+        if(updateTime) {
+            uint8_t dezenaSegundo = seconds / 10;
+            uint8_t unidadeSegundo = seconds % 10;
+
+            if(unidadeSegundo >= 9) {
+                unidadeSegundo = 0;
+            } else {
+                unidadeSegundo++;
+            }
+
+            // Mantém a unidade atual e atualiza a dezena
+            seconds = (dezenaSegundo * 10) + (unidadeSegundo);
+
+            updateTime = false;
+        }
+        break;
+    }
+    newLcdTextReady = true;
+}

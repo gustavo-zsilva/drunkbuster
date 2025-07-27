@@ -1,0 +1,333 @@
+// =============================================================================
+// Project:
+// File:            main.cpp
+// Author:          Leandro Schwarz
+// Created:         2025-06-25
+// Modified:        2025-06-25
+// Version:         1.0
+// Notes:
+// Purpose:
+// =============================================================================
+
+// =============================================================================
+// Precompiler constant defintions
+// =============================================================================
+
+#define F_CPU 16000000UL
+
+// =============================================================================
+// Dependencies
+// =============================================================================
+
+#include "funsape/funsapeLibGlobalDefines.hpp"
+#include "funsape/peripheral/funsapeLibUsart0.hpp"
+#include "pcd8544.hpp"
+// #include "pcd8544.hpp"
+// #include "nokia5110.hpp"
+
+// =============================================================================
+// Constant definitions
+// =============================================================================
+
+// NONE
+
+// =============================================================================
+// New data types
+// =============================================================================
+
+// NONE
+
+// =============================================================================
+// Static function declarations
+// =============================================================================
+
+// NONE
+
+void displayTestHorizontalLines(void);
+void displayTestVerticalLines(void);
+void displayTestDiagonalLines1(void);
+void displayTestDiagonalLines2(void);
+void displayTestDiagonalLines3(void);
+void displayTestDiagonalLines4(void);
+void displayTestClearScreen(void);
+
+// =============================================================================
+// Global variables
+// =============================================================================
+
+// NONE
+Pcd8544 display;
+
+// =============================================================================
+// Main function
+// =============================================================================
+
+int main()
+{
+    // =========================================================================
+    // Variable declaration
+    // =========================================================================
+
+    setBit(DDRB, PB5);
+
+    // Pcd8544 display;
+    // Nokia5110 display;
+
+    // =========================================================================
+    // Variable initialization
+    // =========================================================================
+
+    usart0.enableTransmitter();
+    usart0.init();
+    usart0.stdio();
+    delayMs(1000);
+    printf("USART OK!\r\n");
+
+    // NONE
+
+    if(!display.setPort(&DDRD, PD3, PD4, PD5, PD6, PD7)) {
+        printf("Error: setPort(), %04X\r\n", (uint16_t)display.getLastError());
+        systemHalt();
+    }
+    if(!display.init()) {
+        printf("Error: init(), %04X\r\n", (uint16_t)display.getLastError());
+        systemHalt();
+    }
+
+    // bool_t inverted = false;
+    // uint8_t counter = 0;
+    // char_t string[40];
+    // while(1) {
+    //     display.fillScreen();
+    //     display.drawRoundedRectangle(1, 1, 82, 46, 7, Pcd8544::Color::WHITE);
+    //     display.drawRoundedRectangleFill(10, 10, 73, 33, 7, Pcd8544::Color::WHITE);
+    //     display.setFont((uint8_t *)SmallFont);
+    //     sprintf(string, "c=%u", counter++);
+    //     display.print(string, 20, 20);
+    //     display.renderScreen();
+    //     delayMs(2000);
+    //     display.fillScreen();
+    //     display.drawRoundedRectangle(1, 1, 82, 46, 10, Pcd8544::Color::WHITE);
+    //     display.drawRoundedRectangleFill(10, 10, 73, 33, 10, Pcd8544::Color::WHITE);
+    //     display.setFont((uint8_t *)TinyFont);
+    //     sprintf(string, "c=%u", counter++);
+    //     display.print(string, 30, 21);
+    //     display.renderScreen();
+    //     delayMs(2000);
+    //     inverted = !inverted;
+    //     display.setInvertedMode(inverted);
+    // }
+    // systemHalt();
+
+    while(1) {
+        displayTestHorizontalLines();
+        displayTestClearScreen();
+        displayTestVerticalLines();
+        displayTestClearScreen();
+        displayTestDiagonalLines1();
+        displayTestClearScreen();
+        displayTestDiagonalLines2();
+        displayTestClearScreen();
+        displayTestDiagonalLines3();
+        displayTestClearScreen();
+        displayTestDiagonalLines4();
+        displayTestClearScreen();
+
+        display.setFont((uint8_t *)SmallFont);
+        char_t string[40];
+
+        sprintf(string, " !\"$%%&'()*+,-.");
+        display.print(string, 0, 0);
+        sprintf(string, "/0123456789:;<");
+        display.print(string, 0, 8);
+        sprintf(string, "=>?@ABCDEFGHIJ");
+        display.print(string, 0, 16);
+        sprintf(string, "KLMNOPQRSTUVWX");
+        display.print(string, 0, 24);
+        sprintf(string, "YZ[\\^_`abcdefg");
+        display.print(string, 0, 32);
+        sprintf(string, "hijklmnopqwrtu");
+        display.print(string, 0, 40);
+        display.renderScreen();
+        delayMs(2000);
+        display.clearScreen();
+        sprintf(string, "vwxyz{|}~");
+        display.print(string, 0, 0);
+        display.renderScreen();
+        delayMs(2000);
+
+        display.setFont((uint8_t *)TinyFont);
+
+        sprintf(string, " !\"$%%&'()*+,-.");
+        display.print(string, 0, 0);
+        sprintf(string, "/0123456789:;<");
+        display.print(string, 0, 8);
+        sprintf(string, "=>?@ABCDEFGHIJ");
+        display.print(string, 0, 16);
+        sprintf(string, "KLMNOPQRSTUVWX");
+        display.print(string, 0, 24);
+        sprintf(string, "YZ[\\^_`abcdefg");
+        display.print(string, 0, 32);
+        sprintf(string, "hijklmnopqwrtu");
+        display.print(string, 0, 40);
+        display.renderScreen();
+        delayMs(2000);
+        display.clearScreen();
+        sprintf(string, "vwxyz{|}~");
+        display.print(string, 0, 0);
+        display.renderScreen();
+        delayMs(2000);
+    }
+
+
+
+
+
+
+
+
+
+
+    // =========================================================================
+    // Enable Global Interrupts
+    // =========================================================================
+
+    sei();
+
+    // =========================================================================
+    // Main loop
+    // =========================================================================
+
+    while(1) {
+        cplBit(PORTB, PB5);
+        delayMs(200);
+
+    }
+    return 0;
+}
+
+// =========================================================================
+// Interrupt service routines
+// =========================================================================
+
+// NONE
+
+// =========================================================================
+// Static function definitions
+// =========================================================================
+
+// NONE
+
+void displayTestHorizontalLines(void)
+{
+    // Test horizontal lines
+    for(uint8_t i = 0; i < 48; i++) {
+        if(!(i % 2)) {                  // Even lines x1 -> x2
+            if(!display.drawLine(0, i, 83, i)) {
+                printf("Error: drawLine(), %04X\r\n", (uint16_t)display.getLastError());
+                systemHalt();
+            }
+        } else {                        // Odd lines x1 <- x2
+            if(!display.drawLine(83, i, 0, i)) {
+                printf("Error: drawLine(), %04X\r\n", (uint16_t)display.getLastError());
+                systemHalt();
+            }
+        }
+        display.renderScreen();
+        delayMs(1);
+    }
+    delayMs(100);
+}
+
+void displayTestVerticalLines(void)
+{
+    // Test vertical lines
+    for(uint8_t i = 0; i < 83; i++) {
+        if(!(i % 2)) {                  // Even lines y1 -> y2
+            if(!display.drawLine(i, 0, i, 47)) {
+                printf("Error: drawLine(), %04X\r\n", (uint16_t)display.getLastError());
+                systemHalt();
+            }
+        } else {                        // Odd lines y1 <- y2
+            if(!display.drawLine(i, 47, i, 0)) {
+                printf("Error: drawLine(), %04X\r\n", (uint16_t)display.getLastError());
+                systemHalt();
+            }
+        }
+        display.renderScreen();
+        delayMs(1);
+    }
+    delayMs(100);
+}
+
+void displayTestDiagonalLines1(void)
+{
+    // Test diagonal lines
+    for(uint8_t i = 0; i < 48; i++) {
+        if(!display.drawLine(0, 0, 83, i)) {
+            printf("Error: drawLine(), %04X\r\n", (uint16_t)display.getLastError());
+            systemHalt();
+        }
+        display.renderScreen();
+        delayMs(1);
+    }
+    delayMs(100);
+}
+
+void displayTestDiagonalLines2(void)
+{
+    // Test diagonal lines
+    for(uint8_t i = 0; i < 48; i++) {
+        if(!display.drawLine(0, i, 83, 0)) {
+            printf("Error: drawLine(), %04X\r\n", (uint16_t)display.getLastError());
+            systemHalt();
+        }
+        display.renderScreen();
+        delayMs(1);
+    }
+    delayMs(100);
+}
+
+void displayTestDiagonalLines3(void)
+{
+    // Test diagonal lines
+    for(uint8_t i = 0; i < 84; i++) {
+        if(!display.drawLine(i, 0, 0, 47)) {
+            printf("Error: drawLine(), %04X\r\n", (uint16_t)display.getLastError());
+            systemHalt();
+        }
+        display.renderScreen();
+        delayMs(1);
+    }
+    delayMs(100);
+}
+
+void displayTestDiagonalLines4(void)
+{
+    // Test diagonal lines
+    for(uint8_t i = 0; i < 84; i++) {
+        if(!display.drawLine(83, 47, (83 - i), 0)) {
+            printf("Error: drawLine(), %04X\r\n", (uint16_t)display.getLastError());
+            systemHalt();
+        }
+        display.renderScreen();
+        delayMs(1);
+    }
+    delayMs(100);
+}
+
+void displayTestClearScreen(void)
+{
+    // Clears screens
+    if(!display.clearScreen()) {
+        printf("Error: clearScreen(), %04X\r\n", (uint16_t)display.getLastError());
+        systemHalt();
+    }
+    display.renderScreen();
+    delayMs(100);
+}
+
+
+// =========================================================================
+// End of File (main.cpp)
+// =========================================================================
