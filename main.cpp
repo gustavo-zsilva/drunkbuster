@@ -9,10 +9,12 @@
 #include "funsape/peripheral/funsapeLibTwi.hpp"
 #include "pcd8544.hpp"
 
-#define LM75_ADDRESS 0x48                               // LM75 I2C Address
-#define TEMP_REG     0x00                               // Temperature register
+#define LM75_ADDRESS                    0x48                                    // LM75 I2C Address
+#define TEMP_REG                        0x00                                    // Temperature register
 
-#define CLEAR_LEDS clrMaskOffset(PORTD, 0x07, 5);       // Clear all 3 LEDs with a mask
+#define CLEAR_LEDS                      clrMaskOffset(PORTD, 0x07, 5);          // Clear all 3 LEDs with a mask
+#define ALCOHOL_THRESHOLD               350                                     // Analogic alcohol threshold read by sensor (MQ-3)
+#define TEMP_THRESHOLD                  30                                      // Analogic temperature threshold read by sensor (LM75)
 
 typedef struct {
     bool_t adcReady;
@@ -21,7 +23,7 @@ typedef struct {
     bool_t error;
     bool_t isTemperatureHigh;
     bool_t buttonPressed;
-    bool_t alreadyWarned;
+    bool_t hasCheckedAlcoholLevel;
 } systemFlags_t;
 
 enum class StatesMachine {
@@ -48,6 +50,7 @@ void handlePrintTemperature(void);
 void handleValidateAlcoholLevel(void);
 void handleValidateTemperatureLevel(void);
 void handleResetDisplay(void);
+void handleUpdateStatusOnDisplay(char *bufferStatus, uint8_t x, bool_t useRenderScreen = true);
 void setError(ErrorCode code);
 
 int main()
@@ -59,6 +62,7 @@ int main()
     systemFlags.error = false;
     systemFlags.isTemperatureHigh = false;
     systemFlags.buttonPressed = false;
+    systemFlags.hasCheckedAlcoholLevel = false;
 
     // Initialize variables
     StatesMachine statesMachine = StatesMachine::BOOT;
@@ -69,12 +73,6 @@ int main()
     setMaskOffset(DDRD, 0x07, 5);               // Sets PD5, PD6 & PD7 as output LEDs
 
     // Configure USART0
-    usart0.setBaudRate(Usart0::BaudRate::BAUD_RATE_9600);
-    usart0.setMode(Usart0::Mode::ASYNCHRONOUS);
-    usart0.setStopBits(Usart0::StopBits::SINGLE);
-    usart0.setParityMode(Usart0::ParityMode::NONE);
-    usart0.setDataSize(Usart0::DataSize::DATA_8_BITS);
-    usart0.enableReceiver();
     usart0.enableTransmitter();
     if(!usart0.init()) {
         systemHalt();
@@ -159,6 +157,7 @@ int main()
             setBit(PORTD, PD7);                                                 // ...
             delayMs(250);                                                       // ...
             clrBit(PORTD, PD7);                                                 // ...
+            delayMs(250);                                                       // ...
 
             statesMachine = StatesMachine::CLEAR;                               // Jumps to CLEAR state
             break;
@@ -175,11 +174,10 @@ int main()
                 printf("===============================\r\n");
                 printf("ADC MQ-3 Value: %u\r\n", adcValue);
 
-                handleResetDisplay();
                 char bufferStatus[6] = "CLEAR";
                 char bufferTempStatus[5];
-                display.print(bufferStatus, 5, 35);
 
+                handleUpdateStatusOnDisplay(bufferStatus, 5, false);            // Prints "CLEAR" on display and does not render screen
                 handlePrintTemperature();                                       // Prints LM75 value (temperature) on Serial
                 handleValidateAlcoholLevel();                                   // Validates alcohol level
                 handleValidateTemperatureLevel();                               // Validates temperature level
@@ -206,7 +204,10 @@ int main()
                     printf("SYSTEM LOCKED\r\n");
 
                     timer1.setClockSource(Timer1::ClockSource::DISABLED);       // Disables TIMER1 Clock
-                    // adc.deactivateInterrupt();                                  // Deactivates ADC interrupt
+
+                    // handleResetDisplay();
+                    char bufferStatus[7] = "BUSTED";
+                    handleUpdateStatusOnDisplay(bufferStatus, 3);               // Prints "BUSTED" on display and renders screen
 
                     CLEAR_LEDS;                                                 // Clears LEDs
                     setBit(PORTD, PD5);                                         // Lights up RED LED
@@ -215,44 +216,41 @@ int main()
                     delayMs(2000);                                              // ...
                     clrBit(PORTC, PC3);                                         // ...
 
-                    handleResetDisplay();
-                    char buffer[7] = "BUSTED";                                  // Prints "BUSTED" on Display
-                    display.print(buffer, 3, 35);                               // ...
-                    display.renderScreen();                                     // ...
-
                     systemFlags.hasLockedIndicatorShown = true;
                 }
             }
-            if(systemFlags.buttonPressed) {                                                            // User has unlocked system via push button
-                if(!systemFlags.alreadyWarned) {
-                    delayMs(10);                                                    // 10ms debounce
+            if(systemFlags.buttonPressed) {                                     // User has pressed unlock button
+                if(!systemFlags.hasCheckedAlcoholLevel) {
+                    delayMs(10);                                                // 10ms debounce
 
                     printf("BUTTON PRESSED - CHECKING ALCOHOL LEVEL\r\n");
 
-                    adc.startConversion();
+                    adc.startConversion();                                      // Updates adcValue
                     adc.waitUntilConversionFinish();
                 }
 
-                if(adcValue <= 400) {                                           // Only unlocks if alcohol level has stabilized
+                if(adcValue <= ALCOHOL_THRESHOLD) {                             // Only unlocks if alcohol level has stabilized
                     timer1.setClockSource(Timer1::ClockSource::PRESCALER_256);  // Enables TIMER1 Clock
-                    // adc.activateInterrupt();                                    // Activates ADC interrupt
 
                     systemFlags.systemLocked = false;
                     systemFlags.hasLockedIndicatorShown = false;
                     statesMachine = StatesMachine::CLEAR;                       // Jumps to CLEAR state
                 }
 
-                if(adcValue > 400 && !systemFlags.alreadyWarned) {
-                    printf("ALCOHOL LEVEL TOO HIGH: %u\r\n", adcValue);
-                    systemFlags.alreadyWarned = true;
+                if(adcValue > ALCOHOL_THRESHOLD &&
+                        !systemFlags.hasCheckedAlcoholLevel) {     // Doesn't unlock if alcohol level hasn't stabilized
+                    printf("ALCOHOL LEVEL TOO HIGH: %u\r\n", adcValue);         // and runs only once every button press
+
+                    char bufferStatus[7] = "BUSTED";
+                    handleUpdateStatusOnDisplay(bufferStatus, 3);               // Prints "BUSTED" on display and renders screen
+
+                    systemFlags.hasCheckedAlcoholLevel = true;
                 }
             }
             break;
         case StatesMachine::ERROR:
-            handleResetDisplay();                                               // Shows ERROR state on Display
-            char bufferStatus[6] = "ERROR";                                     // ...
-            display.print(bufferStatus, 5, 35);                                 // ...
-            display.renderScreen();                                             // ...
+            char bufferStatus[6] = "ERROR";
+            handleUpdateStatusOnDisplay(bufferStatus, 5);                       // Prints "ERROR" on display and renders screen
 
             CLEAR_LEDS;                                                         // Clears LEDs
             for(uint8_t i = 0; i < static_cast<uint8_t>(errorCode); i++) {      // Blinks BLUE LED as Error Code number
@@ -286,7 +284,7 @@ void pcint2InterruptCallback()
 {
     if(isBitClr(PIND, PIND4)) {                                                 // Unlock push button has been pressed
         systemFlags.buttonPressed = true;
-        systemFlags.alreadyWarned = false;
+        systemFlags.hasCheckedAlcoholLevel = false;
     }
 }
 
@@ -307,14 +305,14 @@ void handlePrintTemperature()
 
 void handleValidateAlcoholLevel()
 {
-    if(adcValue > 400) {
+    if(adcValue > ALCOHOL_THRESHOLD) {
         systemFlags.systemLocked = true;
     }
 }
 
 void handleValidateTemperatureLevel()
 {
-    if(tempValue[0] >= 30) {
+    if(tempValue[0] >= TEMP_THRESHOLD) {
         systemFlags.isTemperatureHigh = true;
     } else {
         systemFlags.isTemperatureHigh = false;
@@ -349,4 +347,14 @@ void handleResetDisplay()
 
     display.drawRectangle(0, 32, 40, 43);               // Draws state status rectangle
     display.drawRectangle(46, 32, 80, 43);              // Draws temperature status rectangle
+}
+
+void handleUpdateStatusOnDisplay(char *bufferStatus, uint8_t x, bool_t useRenderScreen)
+{
+    handleResetDisplay();
+    display.print(bufferStatus, x, 35);
+
+    if(useRenderScreen) {
+        display.renderScreen();
+    }
 }
