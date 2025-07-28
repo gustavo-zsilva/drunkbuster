@@ -9,8 +9,8 @@
 #include "funsape/peripheral/funsapeLibTwi.hpp"
 #include "pcd8544.hpp"
 
-#define LM75_ADDRESS 0x48                               // Endereço I2C do LM75
-#define TEMP_REG     0x00                               // Registrador de temperatura
+#define LM75_ADDRESS 0x48                               // LM75 I2C Address
+#define TEMP_REG     0x00                               // Temperature register
 
 #define CLEAR_LEDS clrMaskOffset(PORTD, 0x07, 5);       // Clear all 3 LEDs with a mask
 
@@ -19,8 +19,9 @@ typedef struct {
     bool_t systemLocked;
     bool_t hasLockedIndicatorShown;
     bool_t error;
-    bool_t isInvertedColor;
     bool_t isTemperatureHigh;
+    bool_t buttonPressed;
+    bool_t alreadyWarned;
 } systemFlags_t;
 
 enum class StatesMachine {
@@ -56,8 +57,8 @@ int main()
     systemFlags.systemLocked = false;
     systemFlags.hasLockedIndicatorShown = false;
     systemFlags.error = false;
-    systemFlags.isInvertedColor = false;
     systemFlags.isTemperatureHigh = false;
+    systemFlags.buttonPressed = false;
 
     // Initialize variables
     StatesMachine statesMachine = StatesMachine::BOOT;
@@ -118,6 +119,7 @@ int main()
     char temperatureTitle[5] = "Temp";
     char defaultAlcoholValue[5] = "0000";
     char defaultTemperatureValue[5] = "00.0";
+    char bufferStatus[5] = "BOOT";
 
     display.clearScreen();
     display.setFont((uint8_t *)TinyFont);
@@ -129,6 +131,7 @@ int main()
     display.setFont((uint8_t *)SmallFont);
     display.print(defaultAlcoholValue, 0, 16);
     display.print(defaultTemperatureValue, 40, 16);
+    display.print(bufferStatus, 5, 35);
 
     display.drawRectangle(0, 32, 40, 43);
     display.drawRectangle(46, 32, 80, 43);
@@ -148,16 +151,16 @@ int main()
 
         switch(statesMachine) {
         case StatesMachine::BOOT:
-            delayMs(250);                                       // Blinks BLUE LED 2 times
-            setBit(PORTD, PD7);                                 // ...
-            delayMs(250);                                       // ...
-            clrBit(PORTD, PD7);                                 // ...
-            delayMs(250);                                       // ...
-            setBit(PORTD, PD7);                                 // ...
-            delayMs(250);                                       // ...
-            clrBit(PORTD, PD7);                                 // ...
+            delayMs(250);                                                       // Blinks BLUE LED 2 times
+            setBit(PORTD, PD7);                                                 // ...
+            delayMs(250);                                                       // ...
+            clrBit(PORTD, PD7);                                                 // ...
+            delayMs(250);                                                       // ...
+            setBit(PORTD, PD7);                                                 // ...
+            delayMs(250);                                                       // ...
+            clrBit(PORTD, PD7);                                                 // ...
 
-            statesMachine = StatesMachine::CLEAR;               // Sets StatesMachine to CLEAR stateb
+            statesMachine = StatesMachine::CLEAR;                               // Jumps to CLEAR state
             break;
         case StatesMachine::CLEAR:
             if(systemFlags.error) {
@@ -165,29 +168,28 @@ int main()
             }
 
             if(systemFlags.adcReady) {
-                CLEAR_LEDS;                                     // Macro defined to clear all 3 LEDs
-                setBit(PORTD, PD6);                             // Lights up GREEN LED
+                CLEAR_LEDS;                                                     // Clears LEDs
+                setBit(PORTD, PD6);                                             // Activates GREEN LED
 
-                // Imprime valor ADC no Serial
+                // Prints ADC Value on Serial
                 printf("===============================\r\n");
                 printf("ADC MQ-3 Value: %u\r\n", adcValue);
 
+                handleResetDisplay();
                 char bufferStatus[6] = "CLEAR";
                 char bufferTempStatus[5];
-
-                handleResetDisplay();
                 display.print(bufferStatus, 5, 35);
 
-                handlePrintTemperature();                       // Prints LM75 value (temperature) on Serial
-                handleValidateAlcoholLevel();                   // Validates alcohol level
-                handleValidateTemperatureLevel();               // Validates temperature level
+                handlePrintTemperature();                                       // Prints LM75 value (temperature) on Serial
+                handleValidateAlcoholLevel();                                   // Validates alcohol level
+                handleValidateTemperatureLevel();                               // Validates temperature level
 
                 if(systemFlags.isTemperatureHigh) {
-                    strcpy(bufferTempStatus, "HIGH");           // Copies "HIGH" to bufferTempStatus
-                    display.print(bufferTempStatus, 51, 35);
+                    strcpy(bufferTempStatus, "HIGH");                           // Copies "HIGH" to bufferTempStatus
+                    display.print(bufferTempStatus, 51, 35);                    // Shows "HIGH" on temperature rectangle in display
                 } else {
-                    strcpy(bufferTempStatus, "OK");             // Copies "OK" to bufferTempStatus
-                    display.print(bufferTempStatus, 56, 35);
+                    strcpy(bufferTempStatus, "OK");                             // Copies "OK" to bufferTempStatus
+                    display.print(bufferTempStatus, 56, 35);                    // Shows "OK" on temperature rectangle in display
                 }
 
                 display.renderScreen();
@@ -195,7 +197,7 @@ int main()
             }
 
             if(systemFlags.systemLocked) {
-                statesMachine = StatesMachine::BUSTED;
+                statesMachine = StatesMachine::BUSTED;                          // Jumps to BUSTED state
             }
             break;
         case StatesMachine::BUSTED:
@@ -204,34 +206,56 @@ int main()
                     printf("SYSTEM LOCKED\r\n");
 
                     timer1.setClockSource(Timer1::ClockSource::DISABLED);       // Disables TIMER1 Clock
-                    adc.deactivateInterrupt();                                  // Deactivates ADC interrupt
+                    // adc.deactivateInterrupt();                                  // Deactivates ADC interrupt
 
-                    handleResetDisplay();
-                    char buffer[7] = "BUSTED";                                  // Prints "BUSTED" on Display
-                    display.print(buffer, 3, 35);                               // ...
-                    display.renderScreen();                                     // ...
-
-                    CLEAR_LEDS;                                                 // Macro defined to clear all 3 LEDs
+                    CLEAR_LEDS;                                                 // Clears LEDs
                     setBit(PORTD, PD5);                                         // Lights up RED LED
 
                     setBit(PORTC, PC3);                                         // Activates buzzer for 2 seconds
                     delayMs(2000);                                              // ...
                     clrBit(PORTC, PC3);                                         // ...
 
+                    handleResetDisplay();
+                    char buffer[7] = "BUSTED";                                  // Prints "BUSTED" on Display
+                    display.print(buffer, 3, 35);                               // ...
+                    display.renderScreen();                                     // ...
+
                     systemFlags.hasLockedIndicatorShown = true;
                 }
-            } else {                                                            // User has unlocked system via push button
-                printf("SYSTEM UNLOCKED\r\n");
+            }
+            if(systemFlags.buttonPressed) {                                                            // User has unlocked system via push button
+                if(!systemFlags.alreadyWarned) {
+                    delayMs(10);                                                    // 10ms debounce
 
-                timer1.setClockSource(Timer1::ClockSource::PRESCALER_256);      // Enables TIMER1 Clock
-                adc.activateInterrupt();                                        // Activates ADC interrupt
+                    printf("BUTTON PRESSED - CHECKING ALCOHOL LEVEL\r\n");
 
-                statesMachine = StatesMachine::CLEAR;
+                    adc.startConversion();
+                    adc.waitUntilConversionFinish();
+                }
+
+                if(adcValue <= 400) {                                           // Only unlocks if alcohol level has stabilized
+                    timer1.setClockSource(Timer1::ClockSource::PRESCALER_256);  // Enables TIMER1 Clock
+                    // adc.activateInterrupt();                                    // Activates ADC interrupt
+
+                    systemFlags.systemLocked = false;
+                    systemFlags.hasLockedIndicatorShown = false;
+                    statesMachine = StatesMachine::CLEAR;                       // Jumps to CLEAR state
+                }
+
+                if(adcValue > 400 && !systemFlags.alreadyWarned) {
+                    printf("ALCOHOL LEVEL TOO HIGH: %u\r\n", adcValue);
+                    systemFlags.alreadyWarned = true;
+                }
             }
             break;
         case StatesMachine::ERROR:
-            CLEAR_LEDS;
-            for(uint8_t i = 0; i < static_cast<uint8_t>(errorCode); i++) {
+            handleResetDisplay();                                               // Shows ERROR state on Display
+            char bufferStatus[6] = "ERROR";                                     // ...
+            display.print(bufferStatus, 5, 35);                                 // ...
+            display.renderScreen();                                             // ...
+
+            CLEAR_LEDS;                                                         // Clears LEDs
+            for(uint8_t i = 0; i < static_cast<uint8_t>(errorCode); i++) {      // Blinks BLUE LED as Error Code number
                 setBit(PORTD, PD7);
                 delayMs(300);
                 clrBit(PORTD, PD7);
@@ -261,8 +285,8 @@ void adcConversionCompleteCallback()
 void pcint2InterruptCallback()
 {
     if(isBitClr(PIND, PIND4)) {                                                 // Unlock push button has been pressed
-        systemFlags.systemLocked = false;
-        systemFlags.hasLockedIndicatorShown = false;
+        systemFlags.buttonPressed = true;
+        systemFlags.alreadyWarned = false;
     }
 }
 
